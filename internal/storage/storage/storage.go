@@ -5,7 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
+	"path/filepath"
 
+	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/lib/pq"
 	"github.com/mi4r/avito-shop/internal/storage/models"
 )
@@ -17,6 +22,7 @@ var (
 )
 
 type Storage interface {
+	Migrate(dsn string)
 	GetUserByUsername(ctx context.Context, username string) (*models.User, error)
 	CreateUser(ctx context.Context, username, passwordHash string) (*models.User, error)
 	GetUserInventory(ctx context.Context, userID int) ([]models.InventoryItem, error)
@@ -31,6 +37,30 @@ type PostgresStorage struct {
 
 func NewPostgresStorage(db *sql.DB) *PostgresStorage {
 	return &PostgresStorage{db: db}
+}
+
+func (d *PostgresStorage) Migrate(dsn string) {
+	// Try auto-migration
+	if err := d.autoDefaultMigrate(dsn); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func (d *PostgresStorage) autoDefaultMigrate(dsn string) error {
+	mpath, err := filepath.Abs(
+		filepath.Join("internal", "storage", "migrations"))
+	if err != nil {
+		return err
+	}
+
+	migr, err := migrate.New(
+		fmt.Sprintf("file://%s", mpath),
+		dsn,
+	)
+	if err != nil {
+		return err
+	}
+	return migr.Up()
 }
 
 func (s *PostgresStorage) GetUserByUsername(ctx context.Context, username string) (*models.User, error) {
@@ -79,7 +109,9 @@ func (s *PostgresStorage) GetUserInventory(ctx context.Context, userID int) ([]m
 		if err := rows.Scan(&item.Type, &item.Quantity); err != nil {
 			return nil, err
 		}
-		inventory = append(inventory, item)
+		if item.Quantity > 0 {
+			inventory = append(inventory, item)
+		}
 	}
 	return inventory, nil
 }
